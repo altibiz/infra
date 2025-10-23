@@ -1,0 +1,6 @@
+[book]
+authors = ["Hrvoje Jurić <hrvoje@altibiz.com>"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Infra"

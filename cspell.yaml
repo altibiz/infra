@@ -3,4 +3,19 @@ version: "0.2"
 language: en
 ignorePaths:
   - "**/*.nix"
+  - "**/*.lock"
   - "**/docker-compose.yml"
+  - "**/cspell.yaml"
+  - "justfile"
+overrides:
+  - filename: LICENSE.md
+    ignoreWords:
+      - altibiz
+  - filename: CONTRIBUTING.md
+    ignoreWords:
+      - nushell
+      - justfile
+  - filename: renovate.json
+    ignoreWords:
+      - hrvoje
+      - juric

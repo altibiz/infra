@@ -1,0 +1,20 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: >
+          nix develop .#dev -c just deploy "" ALTIBIZ_INFRA_DEPLOY_CREDENTIALS
+        env:
+          ALTIBIZ_INFRA_DEPLOY_CREDENTIALS: >
+            ${{ secrets.ALTIBIZ_INFRA_DEPLOY_CREDENTIALS }}

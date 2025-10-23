@@ -8,8 +8,8 @@
 - [nix]
 - [docker-compose]
 
-Please review [the development shell](./src/dev.nix) for the complete
-list of tools.
+Please review [the development shell](./src/dev.nix) for the complete list of
+tools.
 
 ## Development
 

@@ -12,6 +12,6 @@ and adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - initial repo setup
-- hetzner cloud vm setup
+- elk-legacy cloud vm setup
 
 [1.0.0]: https://github.com/altibiz/infra/releases/tag/1.0.0

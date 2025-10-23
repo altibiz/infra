@@ -12,3 +12,4 @@ result-*
 
 .env
 .direnv
+.creds.yml

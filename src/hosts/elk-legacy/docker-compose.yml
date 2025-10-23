@@ -1,0 +1,214 @@
+configs:
+  certs:
+    content: |
+      set -euo pipefail
+
+      mkdir -p \
+        /usr/share/elasticsearch/config/security/certs \
+        /usr/share/elasticsearch/config/security/tokens
+
+      if [ ! -f /usr/share/elasticsearch/config/security/certs/ca.zip ]; then
+        elasticsearch-certutil ca --silent --pem \
+          --out /usr/share/elasticsearch/config/security/certs/ca.zip
+        unzip \
+          -o /usr/share/elasticsearch/config/security/certs/ca.zip \
+          -d /usr/share/elasticsearch/config/security/certs
+      fi
+
+      cat >/tmp/instances.yml <<'YML'
+      instances:
+        - name: elasticsearch
+          dns: [ "elasticsearch" ]
+          ip: [ "127.0.0.1" ]
+      YML
+
+      elasticsearch-certutil cert --silent --pem \
+        --in /tmp/instances.yml \
+        --ca-cert /usr/share/elasticsearch/config/security/certs/ca/ca.crt \
+        --ca-key /usr/share/elasticsearch/config/security/certs/ca/ca.key \
+        --out /usr/share/elasticsearch/config/security/certs/tmp-certs.zip
+      mv -f /usr/share/elasticsearch/config/security/certs/tmp-certs.zip \
+        /usr/share/elasticsearch/config/security/certs/certs.zip
+
+      unzip \
+        -o /usr/share/elasticsearch/config/security/certs/certs.zip \
+        -d /usr/share/elasticsearch/config/security/certs
+      chmod 644 /usr/share/elasticsearch/config/security/certs/ca/ca.crt
+      chown -R 1000:0 /usr/share/elasticsearch/config/security/certs
+      echo "certs ready"
+
+  kibana-token:
+    content: |
+      set -euo pipefail;
+
+      echo "Waiting for ES...";
+      for i in {1..180}; do
+        if curl -fsS https://elasticsearch:9200 --cacert /usr/share/elasticsearch/config/security/certs/ca/ca.crt >/dev/null; then break; fi
+        sleep 1;
+      done;
+
+      elasticsearch-create-enrollment-token -s kibana > /usr/share/elasticsearch/config/security/tokens/kibana.token;
+      chmod 600 /usr/share/elasticsearch/config/security/tokens/kibana.token;
+      echo "Token created.";
+
+  kibana-enroll:
+    content: |
+      set -euo pipefail;
+
+      kibana-setup -t /usr/share/kibana/config/security/kibana.token;
+
+services:
+  traefik:
+    image: traefik:v2.10
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=hrvoje@altibiz.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    mem_limit: 128m
+    memswap_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks: [web]
+    healthcheck:
+      test: ["CMD-SHELL","wget -q http://127.0.0.1:80 2>&1 >/dev/null | grep -q 404"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  certs:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+    user: "0:0"
+    command: "/bin/bash /usr/share/elasticsearch/config/scripts/certs.sh"
+    volumes:
+      - elasticsearch-security:/usr/share/elasticsearch/config/security
+    configs:
+      - source: certs
+        target: /usr/share/elasticsearch/config/scripts/certs.sh
+    networks: [web]
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL","test -f /usr/share/elasticsearch/config/security/certs/ca/ca.crt && test -f /usr/share/elasticsearch/config/security/certs/elasticsearch/elasticsearch.crt || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.enrollment.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/security/certs/elasticsearch/elasticsearch.crt
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/security/certs/elasticsearch/elasticsearch.key
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/security/certs/ca/ca.crt
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.certificate=/usr/share/elasticsearch/config/security/certs/elasticsearch/elasticsearch.crt
+      - xpack.security.http.ssl.key=/usr/share/elasticsearch/config/security/certs/elasticsearch/elasticsearch.key
+      - xpack.security.http.ssl.certificate_authorities=/usr/share/elasticsearch/config/security/certs/ca/ca.crt
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+      - elasticsearch-security:/usr/share/elasticsearch/config/security:ro
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    networks: [web]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.elasticsearch.rule=Host(`elasticsearch.elk-legacy.altibiz.com`)
+      - traefik.http.routers.elasticsearch.entrypoints=websecure
+      - traefik.http.routers.elasticsearch.tls.certresolver=letsencrypt
+      - traefik.http.services.elasticsearch.loadbalancer.server.port=9200
+    healthcheck:
+      test: ["CMD-SHELL","curl -s -o /dev/null -w '%{http_code}' https://elasticsearch:9200 --cacert /usr/share/elasticsearch/config/security/certs/ca/ca.crt | grep -q '401'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  kibana-token:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+    command: "/bin/bash /usr/share/elasticsearch/config/scripts/kibana-token.sh"
+    volumes:
+      - elasticsearch-security:/usr/share/elasticsearch/config/security
+    configs:
+      - source: kibana-token
+        target: /usr/share/elasticsearch/config/scripts/kibana-token.sh
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks: [web]
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL","test -f /usr/share/elasticsearch/config/security/tokens/kibana.token || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.19.6
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
+      - SERVER_PUBLICBASEURL=https://kibana.elk-legacy.altibiz.com
+      - KIBANA_ENROLLMENT_TOKEN_FILE=/usr/share/kibana/config/security/tokens/kibana.token
+      - NODE_OPTIONS=--max-old-space-size=448
+    volumes:
+      - elasticsearch-security:/usr/share/kibana/config/security:ro
+    depends_on:
+      kibana-token:
+        condition: service_completed_successfully
+    networks: [web]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kibana.rule=Host(`kibana.elk-legacy.altibiz.com`)
+      - traefik.http.routers.kibana.entrypoints=websecure
+      - traefik.http.routers.kibana.tls.certresolver=letsencrypt
+      - traefik.http.services.kibana.loadbalancer.server.port=5601
+    healthcheck:
+      test: ["CMD-SHELL","curl -fsS http://localhost:5601/api/status | grep -q 'available' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+
+  kibana-enroll:
+    image: docker.elastic.co/kibana/kibana:8.19.6
+    command: "/bin/bash /usr/share/kibana/config/scripts/kibana-enroll.sh"
+    volumes:
+      - elasticsearch-security:/usr/share/kibana/config/security:ro
+    configs:
+      - source: kibana-enroll
+        target: /usr/share/kibana/config/scripts/kibana-token.sh
+    depends_on:
+      kibana:
+        condition: service_started
+    networks: [web]
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL","test -f /usr/share/kibana/config/kibana.token || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  web:
+    driver: bridge
+
+volumes:
+  elasticsearch-data:
+  elasticsearch-security:
+  traefik-letsencrypt:

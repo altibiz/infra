@@ -4,6 +4,8 @@
   seal.defaults.devShell = "dev";
   integrate.devShell = {
     devShell = pkgs.mkShell {
+      ALTIBIZ_INFRA_DEPLOY_DEV_CREDENTIALS = ".creds.yml";
+
       packages = with pkgs; [
         # Nix
         nil
@@ -16,8 +18,10 @@
         # Bash
         nodePackages.bash-language-server
         shfmt
+        shellcheck
 
         # Misc
+        nodePackages.cspell
         nodePackages.prettier
         nodePackages.yaml-language-server
         nodePackages.vscode-langservers-extracted
@@ -28,8 +32,11 @@
 
         # Tools
         nixos-generators
+        deploy-rs
         openssh
         sshpass
+        trufflehog
+        mo
       ];
     };
   };

@@ -1,4 +1,5 @@
 [book]
+# cspell: disable-next-line
 authors = ["Hrvoje Jurić <hrvoje@altibiz.com>"]
 language = "en"
 multilingual = false

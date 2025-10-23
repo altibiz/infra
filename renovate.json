@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+  "nix": { "enabled": true },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"],
+    "commitMessageAction": "Update flake inputs",
+    "prTitle": "🔄 Update flake.lock"
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["nix"],
+      "groupName": "nix flake inputs",
+      "schedule": ["before 6am on monday"]
+    }
+  ],
+  "labels": ["dependencies", "automated"],
+  "assignees": ["@HrvojeJuric"]
+}
